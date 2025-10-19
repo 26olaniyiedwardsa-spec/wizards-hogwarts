@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wizards of Hogwarts</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="startOverlay" class="overlay center">
+    <h1>Wizards of Hogwarts</h1>
+    <div id="customize">
+      <p><strong>Choose appearance</strong></p>
+      <div class="row">
+        <label>Gender:
+          <select id="selectGender">
+            <option value="any">Neutral</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </label>
+        <label>Robe color:
+          <select id="selectRobe">
+            <option value="blue">Blue</option>
+            <option value="red">Red</option>
+            <option value="green">Green</option>
+            <option value="black">Black</option>
+          </select>
+        </label>
+      </div>
+      <p><strong>Pick a side</strong></p>
+      <div class="row">
+        <button id="pickGood" class="choice">Good — Hogwarts</button>
+        <button id="pickBad" class="choice">Bad — Dark HQ</button>
+      </div>
+      <p class="small">Controls: virtual joystick + Cast Spell / Menu. Auto-save included.</p>
+      <div style="margin-top:8px"><label><input type="checkbox" id="muteToggle"> Mute sounds</label></div>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="hud">
+    <div id="info">
+      <div>HP: <span id="hpText">100</span></div>
+      <div class="barContainer"><div id="hpBar" class="bar"></div></div>
+      <div>Mana: <span id="manaText">100</span></div>
+      <div class="barContainer"><div id="manaBar" class="bar mana"></div></div>
+      <div>Wand: Lv <span id="wandLv">1</span></div>
+      <div>XP: <span id="xpText">0</span></div>
+    </div>
+    <div id="controlsTop">
+      <button id="btnStats">Stats</button>
+      <button id="btnSpells">Spells</button>
+      <button id="btnMap">Map</button>
+    </div>
+  </div>
+
+  <div id="joystick"><div id="stick"></div></div>
+  <div id="actions">
+    <button id="btnCast">Cast Spell</button>
+    <button id="btnMenu">Menu</button>
+  </div>
+
+  <div id="modalStats" class="modal"><div class="modalContent">
+    <h3>Stats & Upgrades</h3>
+    <div>Power: <span id="statPower">5</span> <button data-stat="power" class="upgrade">+1 (10 XP)</button></div>
+    <div>Speed: <span id="statSpeed">3</span> <button data-stat="speed" class="upgrade">+1 (10 XP)</button></div>
+    <div>Defense: <span id="statDefense">2</span> <button data-stat="defense" class="upgrade">+1 (10 XP)</button></div>
+    <div>Max Mana: <span id="statManaMax">120</span> <button data-stat="manamax" class="upgrade">+20 (10 XP)</button></div>
+    <hr>
+    <div>Wand Lv: <span id="wandLevelDisplay">1</span></div>
+    <button id="upgradeWand">Upgrade Wand (50 XP)</button>
+    <div style="text-align:right;margin-top:8px"><button id="closeStats">Close</button></div>
+  </div></div>
+
+  <div id="modalSpells" class="modal"><div class="modalContent">
+    <h3>Spells</h3>
+    <div id="spellList"></div>
+    <div style="text-align:right;margin-top:8px"><button id="closeSpells">Close</button></div>
+  </div></div>
+
+  <div id="modalMap" class="modal"><div class="modalContent">
+    <h3>Map</h3>
+    <p>You are in: <span id="mapLocation">Hogwarts Grounds</span></p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button data-room="0" class="warpBtn">Hogwarts Grounds</button>
+      <button data-room="1" class="warpBtn">Great Hall</button>
+      <button data-room="2" class="warpBtn">Training Arena</button>
+      <button data-room="3" class="warpBtn">Dark HQ</button>
+    </div>
+    <div style="text-align:right;margin-top:8px"><button id="closeMap">Close</button></div>
+  </div></div>
+
+<script src="sounds.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
