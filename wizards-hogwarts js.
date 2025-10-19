@@ -1,0 +1,353 @@
+/* game.js - full top-down wizard demo (integrated with procedural sounds) */
+(() => {
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+
+function resize(){
+  canvas.width = Math.floor(window.innerWidth * DPR);
+  canvas.height = Math.floor(window.innerHeight * DPR);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.imageSmoothingEnabled = false;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let state = {
+  side: null,
+  room: 0,
+  player: {
+    x: 200, y: 160,
+    hp: 120, maxHp: 120,
+    mana: 120, maxMana: 120,
+    power: 6, speed: 3, defense: 2,
+    wandLevel: 1, xp: 0,
+    robe: 'blue', gender: 'any'
+  },
+  enemies: [],
+  spellsActive: [],
+  lastTime: performance.now(),
+  joystick: {x:0,y:0},
+  spellCD: 0,
+  muted: false
+};
+
+const ROOMS = [
+  {name:'Hogwarts Grounds', colorGood:'#2b4a3a', colorBad:'#2a2a2a'},
+  {name:'Great Hall', colorGood:'#7a4a2a', colorBad:'#3a2a2a'},
+  {name:'Training Arena', colorGood:'#34457a', colorBad:'#2a2a3a'},
+  {name:'Dark HQ', colorGood:'#151515', colorBad:'#0f0f0f'}
+];
+
+const SPELLS = [
+  {id:'expelliarmus',name:'Expelliarmus',mana:12,dmg:10,cooldown:900},
+  {id:'stupefy',name:'Stupefy',mana:18,dmg:22,cooldown:1200},
+  {id:'protego',name:'Protego',mana:16,dmg:0,cooldown:2000},
+  {id:'avada',name:'Avada Kedavra',mana:60,dmg:120,cooldown:5000}
+];
+
+// UI refs
+const overlay = document.getElementById('startOverlay');
+const pickGood = document.getElementById('pickGood');
+const pickBad = document.getElementById('pickBad');
+const muteToggle = document.getElementById('muteToggle');
+
+pickGood.onclick = ()=>begin('good');
+pickBad.onclick = ()=>begin('bad');
+muteToggle.addEventListener('change', (e)=>{ state.muted = e.target.checked; setAudioMuted(state.muted); });
+
+document.getElementById('selectRobe').addEventListener('change', (e)=>state.player.robe=e.target.value);
+document.getElementById('selectGender').addEventListener('change', (e)=>state.player.gender=e.target.value);
+
+document.getElementById('btnStats').addEventListener('click', ()=>document.getElementById('modalStats').style.display='flex');
+document.getElementById('closeStats').addEventListener('click', ()=>document.getElementById('modalStats').style.display='none');
+document.getElementById('btnSpells').addEventListener('click', ()=>{ showSpells(); document.getElementById('modalSpells').style.display='flex'; });
+document.getElementById('closeSpells').addEventListener('click', ()=>document.getElementById('modalSpells').style.display='none');
+document.getElementById('btnMap').addEventListener('click', ()=>{ document.getElementById('modalMap').style.display='flex'; updateMapLabel(); });
+document.getElementById('closeMap').addEventListener('click', ()=>document.getElementById('modalMap').style.display='none');
+
+document.querySelectorAll('.warpBtn').forEach(b=>{ b.addEventListener('click', (e)=>{ warpToRoom(parseInt(e.target.dataset.room)); document.getElementById('modalMap').style.display='none'; }); });
+document.querySelectorAll('.upgrade').forEach(b=>{ b.addEventListener('click', (ev)=>{ const stat = ev.target.dataset.stat; upgrade(stat); }); });
+document.getElementById('upgradeWand').addEventListener('click', upgradeWand);
+
+document.getElementById('btnCast').addEventListener('click', ()=>castSpell());
+document.getElementById('btnMenu').addEventListener('click', ()=>{ playSound('click'); alert('Menu: use Map/Stats/Spells buttons.'); });
+
+// Joystick
+const joy = document.getElementById('joystick');
+const stick = document.getElementById('stick');
+let origin = null;
+function joyStart(e){ e.preventDefault(); origin = {x:(e.touches?e.touches[0].clientX:e.clientX), y:(e.touches?e.touches[0].clientY:e.clientY)}; }
+function joyMove(e){ if(!origin) return; const p = (e.touches?e.touches[0]:e); const dx = p.clientX - origin.x; const dy = p.clientY - origin.y; const max = 36; const mag = Math.min(Math.hypot(dx,dy), max); const ang = Math.atan2(dy,dx); const nx = Math.cos(ang)*mag, ny = Math.sin(ang)*mag; stick.style.transform = `translate(${16+nx}px,${16+ny}px)`; state.joystick.x = nx/max; state.joystick.y = ny/max; }
+function joyEnd(e){ origin = null; state.joystick.x = 0; state.joystick.y = 0; stick.style.transform = 'translate(0px,0px)'; }
+joy.addEventListener('touchstart', joyStart); joy.addEventListener('mousedown', joyStart);
+window.addEventListener('touchmove', joyMove, {passive:false}); window.addEventListener('mousemove', joyMove);
+window.addEventListener('touchend', joyEnd); window.addEventListener('mouseup', joyEnd);
+
+// Save/load
+function save(){ try{ const payload = {side: state.side, room: state.room, player: state.player}; localStorage.setItem('wizards_full_v1', JSON.stringify(payload)); }catch(e){} }
+function loadSave(){ try{ const s = JSON.parse(localStorage.getItem('wizards_full_v1')||'{}'); if(s.player && s.side === state.side){ state.player = Object.assign(state.player, s.player); } }catch(e){} }
+
+// Begin
+function begin(side){
+  overlay.style.display = 'none';
+  state.side = side;
+  if(side === 'bad') document.documentElement.style.setProperty('--accent','#5a2a2a');
+  loadSave();
+  spawnForRoom(state.room);
+  updateHUD();
+}
+
+// Warp and spawn
+function warpToRoom(r){
+  state.room = r;
+  const w = canvas.width / DPR, h = canvas.height / DPR;
+  state.player.x = Math.floor(w/2); state.player.y = Math.floor(h/2);
+  spawnForRoom(r);
+  updateMapLabel();
+}
+
+function spawnForRoom(r){
+  state.enemies = [];
+  const boss = (r === 3);
+  const baseX = 120, baseY = 120;
+  const count = boss ? 3 : 5;
+  for(let i=0;i<count;i++){
+    const ex = baseX + i*60 + r*10;
+    const ey = baseY + (i%3)*70 + r*20;
+    const isBoss = boss && i===1;
+    const hp = isBoss ? 180 : 60 + r*10;
+    state.enemies.push({x:ex,y:ey,hp:hp,maxHp:hp,speed:1.2 + r*0.1,isBoss:isBoss,attackTimer:0});
+  }
+}
+
+// HUD
+function updateHUD(){
+  document.getElementById('hpText').textContent = Math.max(0, Math.floor(state.player.hp));
+  document.getElementById('manaText').textContent = Math.max(0, Math.floor(state.player.mana));
+  const hpPct = (state.player.hp/state.player.maxHp)*100;
+  const manaPct = (state.player.mana/state.player.maxMana)*100;
+  document.getElementById('hpBar').style.width = Math.max(0,hpPct) + '%';
+  document.getElementById('manaBar').style.width = Math.max(0,manaPct) + '%';
+  document.getElementById('wandLv').textContent = state.player.wandLevel;
+  document.getElementById('xpText').textContent = Math.floor(state.player.xp);
+  document.getElementById('wandLevelDisplay').textContent = state.player.wandLevel;
+  document.getElementById('statPower').textContent = state.player.power;
+  document.getElementById('statSpeed').textContent = state.player.speed;
+  document.getElementById('statDefense').textContent = state.player.defense;
+  document.getElementById('statManaMax').textContent = state.player.maxMana || 120;
+}
+
+function updateMapLabel(){ document.getElementById('mapLocation').textContent = ROOMS[state.room].name; }
+
+// Upgrades
+function upgrade(stat){
+  const cost = 10;
+  if(state.player.xp < cost){ alert('Not enough XP'); return; }
+  state.player.xp -= cost;
+  if(stat === 'power') state.player.power += 1;
+  if(stat === 'speed') state.player.speed += 1;
+  if(stat === 'defense') state.player.defense += 1;
+  if(stat === 'manamax'){ state.player.maxMana = (state.player.maxMana||120) + 20; state.player.mana += 20; }
+  playSound('levelup');
+  updateHUD();
+  save();
+}
+
+function upgradeWand(){
+  const cost = 50;
+  if(state.player.xp < cost){ alert('Not enough XP'); return; }
+  state.player.xp -= cost;
+  state.player.wandLevel += 1;
+  playSound('levelup');
+  alert('Wand upgraded! New spells unlocked.');
+  updateHUD();
+  save();
+}
+
+// Spells UI
+function showSpells(){
+  const list = document.getElementById('spellList');
+  list.innerHTML = '';
+  const wandLv = Math.min(state.player.wandLevel,3);
+  const avail = [];
+  avail.push(SPELLS[0]);
+  if(wandLv >= 1) avail.push(SPELLS[1]);
+  if(wandLv >= 2) avail.push(SPELLS[2]);
+  if(state.side === 'bad' && wandLv >= 3) avail.push(SPELLS[3]);
+  avail.forEach(s=>{
+    const el = document.createElement('div');
+    el.textContent = `${s.name} — Mana ${s.mana} — Dmg ${s.dmg}`;
+    list.appendChild(el);
+  });
+}
+
+// Cast spell
+function castSpell(){
+  const wandLv = Math.min(state.player.wandLevel,3);
+  let chosen = SPELLS[0];
+  if(wandLv >= 3 && state.side === 'bad') chosen = SPELLS[3];
+  else if(wandLv >= 2) chosen = SPELLS[2];
+  else if(wandLv >= 1) chosen = SPELLS[1];
+
+  const now = performance.now();
+  if(state.spellCD > now) return;
+  if(state.player.mana < chosen.mana){ alert('Not enough mana'); return; }
+
+  state.player.mana -= chosen.mana;
+  state.spellCD = now + chosen.cooldown;
+  playSound('cast');
+  // create projectile
+  const dir = {x: state.joystick.x || 1, y: state.joystick.y || 0};
+  const mag = Math.hypot(dir.x, dir.y) || 1;
+  dir.x /= mag; dir.y /= mag;
+  state.spellsActive.push({spell: chosen.id, x: state.player.x, y: state.player.y, vx: dir.x * 240, vy: dir.y * 240, dmg: chosen.dmg});
+  updateHUD();
+  save();
+}
+
+// Game loop
+function gameLoop(ts){
+  const dt = Math.min(60, ts - state.lastTime) / 1000;
+  state.lastTime = ts;
+  // movement
+  state.player.x += state.joystick.x * state.player.speed * 60 * dt;
+  state.player.y += state.joystick.y * state.player.speed * 60 * dt;
+  // bounds
+  state.player.x = Math.max(16, Math.min(canvas.width / DPR - 16, state.player.x));
+  state.player.y = Math.max(16, Math.min(canvas.height / DPR - 16, state.player.y));
+  // update spells
+  for(let i = state.spellsActive.length - 1; i >= 0; i--){
+    const s = state.spellsActive[i];
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    // collisions with enemies
+    for(let j = 0; j < state.enemies.length; j++){
+      const e = state.enemies[j];
+      const dx = s.x - e.x, dy = s.y - e.y;
+      const dist = Math.hypot(dx, dy);
+      if(dist < 18){
+        e.hp -= Math.max(1, s.dmg - (state.player.defense * 0.2));
+        playSound('hit');
+        if(e.hp <= 0){
+          state.player.xp += e.isBoss ? 80 : 18;
+          state.enemies.splice(j,1);
+        }
+        state.spellsActive.splice(i,1);
+        break;
+      }
+    }
+    // remove offscreen
+    if(s.x < 0 || s.y < 0 || s.x > canvas.width / DPR || s.y > canvas.height / DPR) state.spellsActive.splice(i,1);
+  }
+
+  // enemy AI
+  state.enemies.forEach(e=>{
+    const dx = state.player.x - e.x, dy = state.player.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    if(dist > 4){
+      e.x += (dx/dist) * e.speed * 30 * dt;
+      e.y += (dy/dist) * e.speed * 30 * dt;
+    }
+    e.attackTimer -= 1000 * dt;
+    if(dist < 28 && e.attackTimer <= 0){
+      const dmg = e.isBoss ? 18 : 8;
+      state.player.hp -= Math.max(1, dmg - state.player.defense * 0.8);
+      playSound('damage');
+      e.attackTimer = 0.9 + Math.random() * 0.5;
+      if(state.player.hp <= 0){
+        state.player.hp = Math.floor(state.player.maxHp * 0.6);
+        state.player.mana = Math.floor(state.player.maxMana * 0.5);
+      }
+    }
+  });
+
+  // mana regen
+  state.player.mana = Math.min(state.player.maxMana, state.player.mana + 10 * dt * (1 + state.player.wandLevel * 0.1));
+  updateHUD();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// render (simple pixel blocks)
+function render(){
+  const w = canvas.width / DPR, h = canvas.height / DPR;
+  const room = ROOMS[state.room];
+  const bg = (state.side === 'bad') ? room.colorBad : room.colorGood;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width / DPR, canvas.height / DPR);
+
+  // tile grid for retro feel
+  const tile = 16;
+  for(let x=0;x<w;x+=tile){
+    for(let y=0;y<h;y+=tile){
+      const shade = ((x+y)/tile) % 2 === 0 ? 1 : 0;
+      ctx.fillStyle = shade ? shadeColor(bg, -8) : shadeColor(bg, -16);
+      ctx.fillRect(x, y, tile, tile);
+    }
+  }
+
+  // enemies
+  state.enemies.forEach(e=>{
+    ctx.fillStyle = e.isBoss ? '#b33' : '#d88';
+    ctx.fillRect((e.x-8), (e.y-8), 16, 16);
+    // hp bar
+    ctx.fillStyle = '#000';
+    ctx.fillRect(e.x-12, e.y-18, 40, 6);
+    ctx.fillStyle = '#b33';
+    ctx.fillRect(e.x-12, e.y-18, 40 * Math.max(0, e.hp / e.maxHp), 6);
+  });
+
+  // spells
+  state.spellsActive.forEach(s=>{
+    ctx.fillStyle = '#ffd86b';
+    ctx.fillRect(s.x-4, s.y-4, 8, 8);
+  });
+
+  // player
+  ctx.fillStyle = robeColor(state.player.robe);
+  ctx.fillRect(state.player.x-8, state.player.y-10, 16, 20);
+  // wand tip
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(state.player.x+6, state.player.y-6, 4, 2);
+}
+
+function shadeColor(hex, percent) {
+  const num = parseInt(hex.slice(1),16);
+  let r = (num >> 16) + percent;
+  let g = ((num >> 8) & 0x00FF) + percent;
+  let b = (num & 0x0000FF) + percent;
+  r = Math.max(0, Math.min(255, r));
+  g = Math.max(0, Math.min(255, g));
+  b = Math.max(0, Math.min(255, b));
+  return '#' + ((r<<16) | (g<<8) | b).toString(16).padStart(6,'0');
+}
+
+function robeColor(name){
+  switch(name){
+    case 'red': return '#b34';
+    case 'green': return '#4b8';
+    case 'black': return '#111';
+    default: return '#36f'; // blue
+  }
+}
+
+// keyboard input
+window.addEventListener('keydown',(e)=>{
+  switch(e.key){
+    case 'ArrowUp': case 'w': state.joystick.y = -1; break;
+    case 'ArrowDown': case 's': state.joystick.y = 1; break;
+    case 'ArrowLeft': case 'a': state.joystick.x = -1; break;
+    case 'ArrowRight': case 'd': state.joystick.x = 1; break;
+    case ' ': castSpell(); break;
+  }
+});
+window.addEventListener('keyup',(e)=>{
+  if(['ArrowUp','w','ArrowDown','s'].includes(e.key)) state.joystick.y = 0;
+  if(['ArrowLeft','a','ArrowRight','d'].includes(e.key)) state.joystick.x = 0;
+});
+
+// periodic save
+setInterval(save, 5000);
+requestAnimationFrame(gameLoop);
+})();
